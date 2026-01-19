@@ -123,7 +123,8 @@ class NoOpNerEngine implements LocalNerEngine {
 class TextNormalizer {
   const TextNormalizer();
 
-  String normalize(String raw) {
+  /// Light cleanup for display: keeps the original wording/casing.
+  String cleanTranscript(String raw) {
     var text = raw.trim();
 
     // Normalize new lines
@@ -132,6 +133,16 @@ class TextNormalizer {
 
     // Collapse horizontal spaces
     text = text.replaceAll(RegExp(r'[ \t]+'), ' ');
+
+    // Final space cleanup
+    text = text.replaceAll(RegExp(r' +'), ' ');
+
+    return text.trim();
+  }
+
+  /// Normalization dedicated to extraction/matching, not for display.
+  String normalizeForMatching(String raw) {
+    var text = cleanTranscript(raw);
 
     // Lowercase for simpler matching
     text = text.toLowerCase();
@@ -182,6 +193,8 @@ class TextNormalizer {
 
     return text.trim();
   }
+
+  String normalize(String raw) => normalizeForMatching(raw);
 }
 
 /// =======================
@@ -1217,6 +1230,43 @@ class RuleBasedExtractor {
   RuleBasedExtractor({LocalNerEngine? nerEngine})
       : ner = nerEngine ?? NoOpNerEngine();
 
+  List<_AliasHit> _findDrugAliasHits(String segment) {
+    final lowerSegment = segment.toLowerCase();
+    final hits = <_AliasHit>[];
+
+    for (final drug in drugLexicon) {
+      for (final alias in drug.aliases) {
+        final needle = alias.toLowerCase();
+        var idx = lowerSegment.indexOf(needle);
+        while (idx != -1) {
+          hits.add(
+            _AliasHit(start: idx, end: idx + needle.length, drug: drug),
+          );
+          idx = lowerSegment.indexOf(needle, idx + needle.length);
+        }
+      }
+    }
+
+    if (hits.length <= 1) return hits;
+
+    hits.sort((a, b) {
+      if (a.start != b.start) return a.start.compareTo(b.start);
+      return (b.end - b.start).compareTo(a.end - a.start);
+    });
+
+    final deduped = <_AliasHit>[];
+    int currentEnd = -1;
+    for (final hit in hits) {
+      if (hit.start < currentEnd) {
+        continue;
+      }
+      deduped.add(hit);
+      currentEnd = hit.end;
+    }
+
+    return deduped;
+  }
+
   /// Version basée sur les DOSES :
   /// - On identifie chaque dose (1 g, 4 g, 320 mg, ...)
   /// - Chaque dose définit un "sous-segment" qui correspond à un traitement
@@ -1229,12 +1279,47 @@ class RuleBasedExtractor {
   ///    "4 g x2 par jour Piperacilline + Tazo sur PAC"]
   @override
   List<String> splitMultiDrugSegment(String segment) {
-    final doseRegex = RegExp(r'(\d+(?:[.,]\d+)?)\s*(mg|g|µg|ug)');
+    final doseRegex = RegExp(
+      r'(\d+(?:[.,]\d+)?|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(mg|g|µg|ug)',
+    );
     final matches = doseRegex.allMatches(segment).toList();
 
     // 0 ou 1 dose : on garde le segment tel quel
     if (matches.length <= 1) {
-      return [segment];
+      final aliasHits = _findDrugAliasHits(segment);
+      if (aliasHits.length <= 1) {
+        return [segment];
+      }
+
+      final connectorRegex = RegExp(r'\b(et|puis|plus)\b|\+|,|;');
+      final pieces = <String>[];
+      var start = aliasHits.first.start;
+
+      for (var i = 0; i < aliasHits.length - 1; i++) {
+        final current = aliasHits[i];
+        final next = aliasHits[i + 1];
+        final between = segment.substring(current.end, next.start);
+        int? cutOffset;
+        for (final m in connectorRegex.allMatches(between)) {
+          cutOffset = m.end;
+        }
+        if (cutOffset == null) {
+          continue;
+        }
+        final end = current.end + cutOffset;
+        final slice = segment.substring(start, end).trim();
+        if (slice.isNotEmpty) {
+          pieces.add(slice);
+        }
+        start = end;
+      }
+
+      final tail = segment.substring(start).trim();
+      if (tail.isNotEmpty) {
+        pieces.add(tail);
+      }
+
+      return pieces.length > 1 ? pieces : [segment];
     }
 
     final connectorRegex = RegExp(r'\b(et|puis|plus)\b|,|;');

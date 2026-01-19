@@ -45,12 +45,14 @@ class NoOpSpeechTranscriber implements SpeechTranscriber {
 /// Result container for the full pipeline.
 class SpeechPipelineResult {
   final String transcript;
+  final String cleanedTranscript;
   final String normalizedTranscript;
   final List<Prescription> prescriptions;
   final PatientProfile? patient;
 
   SpeechPipelineResult({
     required this.transcript,
+    required this.cleanedTranscript,
     required this.normalizedTranscript,
     required this.prescriptions,
     required this.patient,
@@ -77,13 +79,15 @@ class SpeechToPrescriptionPipeline {
   /// string -> list of [Prescription].
   Future<SpeechPipelineResult> transcribeAndExtract(String audioFilePath) async {
     final transcript = await transcriber.transcribeFile(audioFilePath);
-    final normalized = normalizer.normalize(transcript);
+    final cleaned = normalizer.cleanTranscript(transcript);
+    final normalized = normalizer.normalizeForMatching(cleaned);
     final patient =
-        patientExtractor.extract(transcript, normalizedText: normalized);
+        patientExtractor.extract(cleaned, normalizedText: normalized);
     final prescriptions = extractor.extract(normalized);
 
     return SpeechPipelineResult(
       transcript: transcript,
+      cleanedTranscript: cleaned,
       normalizedTranscript: normalized,
       prescriptions: prescriptions,
       patient: patient,

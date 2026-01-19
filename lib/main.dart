@@ -8,6 +8,7 @@ import 'package:whisper_flutter_new/whisper_flutter_new.dart';
 import 'prescription_engine.dart';
 import 'speech_to_text_pipeline.dart';
 import 'whisper_flutter_adapter.dart';
+import 'whisper_prompts.dart';
 
 void main() {
   runApp(const PrescriptionNormalizerApp());
@@ -74,7 +75,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
   bool _isInitializing = false;
   String? _initError;
 
-  String _normalizedText = '';
+  String _cleanedTranscript = '';
   String _jsonResult = '{"patient": null, "prescriptions": []}';
   String _status = '';
   bool _isRecording = false;
@@ -97,8 +98,9 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
 
   void _process() {
     final raw = _inputController.text;
-    final normalized = _normalizer.normalize(raw);
-    final patient = _patientExtractor.extract(raw, normalizedText: normalized);
+    final cleaned = _normalizer.cleanTranscript(raw);
+    final normalized = _normalizer.normalizeForMatching(cleaned);
+    final patient = _patientExtractor.extract(cleaned, normalizedText: normalized);
     final prescriptions = _extractor.extract(normalized);
     const encoder = JsonEncoder.withIndent('  ');
     final jsonString = encoder.convert({
@@ -107,7 +109,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
     });
 
     setState(() {
-      _normalizedText = normalized;
+      _cleanedTranscript = cleaned;
       _jsonResult = jsonString;
       _patientProfile = patient;
     });
@@ -177,7 +179,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
       const encoder = JsonEncoder.withIndent('  ');
       setState(() {
         _inputController.text = result.transcript;
-        _normalizedText = result.normalizedTranscript;
+        _cleanedTranscript = result.cleanedTranscript;
         _jsonResult = encoder.convert({
           'patient': result.patient?.toJson(),
           'prescriptions': result.prescriptions.map((p) => p.toJson()).toList(),
@@ -371,7 +373,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                       ),
                       const SizedBox(height: 8),
 
-                      // Texte normalisé
+                      // Transcription nettoyée
                       Card(
                         elevation: 0,
                         color: Theme.of(context)
@@ -383,14 +385,14 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Texte normalisé',
+                                'Transcription nettoyée',
                                 style: Theme.of(context)
                                     .textTheme
                                     .labelLarge,
                               ),
                               const SizedBox(height: 8),
                               SelectableText(
-                                _normalizedText,
+                                _cleanedTranscript,
                                 key: const Key('normalized-text'),
                                 style:
                                     const TextStyle(fontFamily: 'monospace'),
@@ -653,6 +655,10 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
         model: _selectedModel,
         language: 'fr',
         translate: false,
+        initialPrompt: whisperSystemPrompt,
+        temperature: 0.1,
+        beamSize: 5,
+        bestOf: 5,
         downloadHost: _selectedHost, // modèle custom (Hugging Face ou offline)
         assetModelPath: _selectedAssetPath,
         onStatus: (status) {

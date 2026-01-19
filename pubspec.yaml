@@ -13,6 +13,10 @@ dependencies:
   record: ^6.1.2
   whisper_flutter_new: ^1.0.1
 
+dependency_overrides:
+  whisper_flutter_new:
+    path: packages/whisper_flutter_new
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -20,6 +20,14 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
     this.language = 'fr',
     this.translate = false,
     this.splitOnWord = true,
+    this.initialPrompt = '',
+    this.temperature = 0.1,
+    this.temperatureInc = 0.0,
+    this.bestOf = 5,
+    this.beamSize = 5,
+    this.entropyThreshold = 2.4,
+    this.logprobThreshold = -1.0,
+    this.noSpeechThreshold = 0.6,
     this.modelDir,
     this.downloadHost = defaultDownloadHost,
   }) : _whisper = Whisper(
@@ -32,6 +40,14 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
   final String language;
   final bool translate;
   final bool splitOnWord;
+  final String initialPrompt;
+  final double temperature;
+  final double temperatureInc;
+  final int bestOf;
+  final int beamSize;
+  final double entropyThreshold;
+  final double logprobThreshold;
+  final double noSpeechThreshold;
   final String? modelDir;
   final String? downloadHost;
 
@@ -41,6 +57,14 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
     String language = 'fr',
     bool translate = false,
     bool splitOnWord = true,
+    String initialPrompt = '',
+    double temperature = 0.1,
+    double temperatureInc = 0.0,
+    int bestOf = 5,
+    int beamSize = 5,
+    double entropyThreshold = 2.4,
+    double logprobThreshold = -1.0,
+    double noSpeechThreshold = 0.6,
     String? downloadHost = defaultDownloadHost,
     String? assetModelPath,
     void Function(String status)? onStatus,
@@ -106,6 +130,14 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
       language: language,
       translate: translate,
       splitOnWord: splitOnWord,
+      initialPrompt: initialPrompt,
+      temperature: temperature,
+      temperatureInc: temperatureInc,
+      bestOf: bestOf,
+      beamSize: beamSize,
+      entropyThreshold: entropyThreshold,
+      logprobThreshold: logprobThreshold,
+      noSpeechThreshold: noSpeechThreshold,
       modelDir: modelDir,
       downloadHost: downloadHost,
     );
@@ -149,6 +181,14 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
         language: language,
         isTranslate: translate,
         splitOnWord: splitOnWord,
+        initialPrompt: initialPrompt,
+        temperature: temperature,
+        temperatureInc: temperatureInc,
+        bestOf: bestOf,
+        beamSize: beamSize,
+        entropyThreshold: entropyThreshold,
+        logprobThreshold: logprobThreshold,
+        noSpeechThreshold: noSpeechThreshold,
       ),
     );
     return response.text;
