@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'llm_prescription_extractor.dart';
 import 'prescription_engine.dart';
 
 /// A simple contract for turning an audio file into raw text.
@@ -64,14 +65,17 @@ class SpeechToPrescriptionPipeline {
     TextNormalizer? normalizer,
     RuleBasedExtractor? extractor,
     PatientProfileExtractor? patientExtractor,
+    LlmPrescriptionExtractor? llmExtractor,
   })  : normalizer = normalizer ?? const TextNormalizer(),
         extractor = extractor ?? RuleBasedExtractor(),
-        patientExtractor = patientExtractor ?? const PatientProfileExtractor();
+        patientExtractor = patientExtractor ?? const PatientProfileExtractor(),
+        llmExtractor = llmExtractor;
 
   final SpeechTranscriber transcriber;
   final TextNormalizer normalizer;
   final RuleBasedExtractor extractor;
   final PatientProfileExtractor patientExtractor;
+  final LlmPrescriptionExtractor? llmExtractor;
 
   /// Convenience helper to go from audio file -> transcript -> normalized
   /// string -> list of [Prescription].
@@ -87,6 +91,39 @@ class SpeechToPrescriptionPipeline {
       normalizedTranscript: normalized,
       prescriptions: prescriptions,
       patient: patient,
+    );
+  }
+
+  /// LLM-aware version that can fill missing fields with the LLM output.
+  Future<SpeechPipelineResult> transcribeAndExtractWithLlm(
+    String audioFilePath,
+  ) async {
+    final transcript = await transcriber.transcribeFile(audioFilePath);
+    final normalized = normalizer.normalize(transcript);
+
+    final llm = llmExtractor;
+    if (llm == null) {
+      return SpeechPipelineResult(
+        transcript: transcript,
+        normalizedTranscript: normalized,
+        prescriptions: extractor.extract(normalized),
+        patient: patientExtractor.extract(
+          transcript,
+          normalizedText: normalized,
+        ),
+      );
+    }
+
+    final llmResult = await llm.extract(
+      transcript,
+      normalizedText: normalized,
+    );
+
+    return SpeechPipelineResult(
+      transcript: transcript,
+      normalizedTranscript: normalized,
+      prescriptions: llmResult.prescriptions,
+      patient: llmResult.patient,
     );
   }
 }

@@ -1,10 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:whisper_flutter_new/whisper_flutter_new.dart';
 
+import 'llm_prescription_extractor.dart';
+import 'local_llm_client.dart';
 import 'prescription_engine.dart';
 import 'speech_to_text_pipeline.dart';
 import 'whisper_flutter_adapter.dart';
@@ -43,6 +47,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
       'Ceftriaxone 1g 3 fois par jour VVP pendant 7 jours (retrocession hospitaliere)';
 
   static const _medicalAssetPath = 'assets/models/whisper-small-medical.bin';
+  static const _qwenAssetPath = 'assets/models/qwen2-0_5b-instruct-q4_k_m.gguf';
 
   static const _whisperModels = <_WhisperModelOption>[
     _WhisperModelOption(
@@ -64,6 +69,9 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
   final _normalizer = const TextNormalizer();
   final _extractor = RuleBasedExtractor();
   final _patientExtractor = const PatientProfileExtractor();
+  final MethodChannelLlmClient _llmClient = MethodChannelLlmClient();
+  late final LlmPrescriptionExtractor _llmExtractor =
+      LlmPrescriptionExtractor(client: _llmClient);
   final _recorder = AudioRecorder();
   SpeechToPrescriptionPipeline? _speechPipeline;
   WhisperModel _selectedModel = _whisperModels.first.model;
@@ -73,6 +81,12 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
   bool _isPipelineReady = false;
   bool _isInitializing = false;
   String? _initError;
+  bool _useLlm = false;
+  bool _isLlmReady = false;
+  String? _llmError;
+  bool _isLlmInitializing = false;
+  Timer? _llmInitTimer;
+  Stopwatch? _llmStopwatch;
 
   String _normalizedText = '';
   String _jsonResult = '{"patient": null, "prescriptions": []}';
@@ -92,14 +106,48 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
   void dispose() {
     _inputController.dispose();
     _recorder.dispose();
+    _llmInitTimer?.cancel();
     super.dispose();
   }
 
-  void _process() {
+  Future<void> _process() async {
+    if (_isProcessing) return;
+    setState(() {
+      _isProcessing = true;
+      _status = _useLlm ? 'Analyse LLM en cours...' : 'Analyse en cours...';
+    });
+
     final raw = _inputController.text;
     final normalized = _normalizer.normalize(raw);
-    final patient = _patientExtractor.extract(raw, normalizedText: normalized);
-    final prescriptions = _extractor.extract(normalized);
+
+    PatientProfile? patient;
+    List<Prescription> prescriptions;
+
+    if (_useLlm) {
+      if (!_isLlmReady) {
+        await _initializeLlm();
+      }
+      try {
+        final llmResult = await _llmExtractor.extract(
+          raw,
+          normalizedText: normalized,
+          maxTokens: 64,
+          temperature: 0.1,
+        );
+        patient = llmResult.patient;
+        prescriptions = llmResult.prescriptions;
+      } catch (e) {
+        patient = _patientExtractor.extract(raw, normalizedText: normalized);
+        prescriptions = _extractor.extract(normalized);
+        setState(() {
+          _status = 'Fallback rule-based (LLM indisponible): $e';
+        });
+      }
+    } else {
+      patient = _patientExtractor.extract(raw, normalizedText: normalized);
+      prescriptions = _extractor.extract(normalized);
+    }
+
     const encoder = JsonEncoder.withIndent('  ');
     final jsonString = encoder.convert({
       'patient': patient?.toJson(),
@@ -110,6 +158,10 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
       _normalizedText = normalized;
       _jsonResult = jsonString;
       _patientProfile = patient;
+      _isProcessing = false;
+      if (!_status.contains('Fallback')) {
+        _status = 'Analyse terminée';
+      }
     });
   }
 
@@ -173,7 +225,12 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
     }
 
     try {
-      final result = await pipeline.transcribeAndExtract(path);
+      if (_useLlm && !_isLlmReady) {
+        await _initializeLlm();
+      }
+      final result = _useLlm
+          ? await pipeline.transcribeAndExtractWithLlm(path)
+          : await pipeline.transcribeAndExtract(path);
       const encoder = JsonEncoder.withIndent('  ');
       setState(() {
         _inputController.text = result.transcript;
@@ -201,7 +258,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
     if (!_isPipelineReady) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Moteur de prescription (offline)'),
+          title: const Text('Moteur de prescription'),
         ),
         body: Center(
           child: Column(
@@ -249,7 +306,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Moteur de prescription (offline)'),
+        title: const Text('Moteur de prescription'),
       ),
       body: SafeArea(
         child: Column(
@@ -304,7 +361,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<_WhisperModelOption>(
-                        value: _whisperModels.firstWhere(
+                        initialValue: _whisperModels.firstWhere(
                           (option) =>
                               option.model == _selectedModel &&
                               option.downloadHost == _selectedHost &&
@@ -364,6 +421,37 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                       ),
                       const SizedBox(height: 16),
 
+                      Text(
+                        'Extraction LLM',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      SwitchListTile.adaptive(
+                        value: _useLlm,
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Activer Qwen on-device'),
+                        subtitle: Text(
+                          _useLlm
+                              ? (_isLlmReady
+                                  ? 'Le LLM complète patient + prescriptions'
+                                  : 'Initialisation du modèle en cours...')
+                              : 'Extraction rule-based uniquement',
+                        ),
+                        onChanged: _isProcessing
+                            ? null
+                            : (value) {
+                                setState(() {
+                                  _useLlm = value;
+                                });
+                                if (value) {
+                                  _initializeLlm().then((_) => _process());
+                                } else {
+                                  _process();
+                                }
+                              },
+                      ),
+                      const SizedBox(height: 16),
+
                       // --- Endroit dédié aux réponses ---
                       Text(
                         'Réponse',
@@ -384,16 +472,13 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             children: [
                               Text(
                                 'Texte normalisé',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelLarge,
+                                style: Theme.of(context).textTheme.labelLarge,
                               ),
                               const SizedBox(height: 8),
                               SelectableText(
                                 _normalizedText,
                                 key: const Key('normalized-text'),
-                                style:
-                                    const TextStyle(fontFamily: 'monospace'),
+                                style: const TextStyle(fontFamily: 'monospace'),
                               ),
                             ],
                           ),
@@ -414,42 +499,55 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             children: [
                               Text(
                                 'Profil patient',
-                                style:
-                                    Theme.of(context).textTheme.labelLarge,
+                                style: Theme.of(context).textTheme.labelLarge,
                               ),
                               const SizedBox(height: 8),
                               if (_patientProfile == null) ...[
                                 Text(
                                   'Aucun profil détecté',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium,
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                               ] else ...[
                                 Text(
                                   'Nom: ${_patientProfile!.lastName ?? '-'}',
-                                  style:
-                                      Theme.of(context).textTheme.bodyMedium,
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Prénom: ${_patientProfile!.firstName ?? '-'}',
-                                  style:
-                                      Theme.of(context).textTheme.bodyMedium,
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Genre: ${_patientProfile!.gender ?? '-'}',
-                                  style:
-                                      Theme.of(context).textTheme.bodyMedium,
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Adresse: ${_patientProfile!.address ?? '-'}',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Ville: ${_patientProfile!.city ?? '-'}',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Email: ${_patientProfile!.email ?? '-'}',
+                                  style: Theme.of(context).textTheme.bodyMedium,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Téléphone: ${_patientProfile!.phone ?? '-'}',
+                                  style: Theme.of(context).textTheme.bodyMedium,
                                 ),
                                 if (_patientProfile!.civility != null) ...[
                                   const SizedBox(height: 4),
                                   Text(
                                     'Civilité: ${_patientProfile!.civility}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium,
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
                                   ),
                                 ],
                                 if (_patientProfile!.sourceText != null &&
@@ -459,9 +557,8 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                                   const SizedBox(height: 8),
                                   Text(
                                     'Extrait: ${_patientProfile!.sourceText}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
                                   ),
                                 ],
                               ],
@@ -484,16 +581,13 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             children: [
                               Text(
                                 'JSON résultat',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelLarge,
+                                style: Theme.of(context).textTheme.labelLarge,
                               ),
                               const SizedBox(height: 8),
                               SelectableText(
                                 _jsonResult,
                                 key: const Key('json-output'),
-                                style:
-                                    const TextStyle(fontFamily: 'monospace'),
+                                style: const TextStyle(fontFamily: 'monospace'),
                               ),
                             ],
                           ),
@@ -518,13 +612,9 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                       _isRecording
                           ? 'Relâche pour arrêter et transcrire'
                           : 'Maintiens le micro pour dicter ou saisis le texte',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                       textAlign: TextAlign.center,
                     ),
@@ -540,8 +630,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             maxLines: 4,
                             textInputAction: TextInputAction.newline,
                             decoration: InputDecoration(
-                              hintText:
-                                  'Dicter ou saisir une ordonnance…',
+                              hintText: 'Dicter ou saisir une ordonnance…',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(24),
                               ),
@@ -638,8 +727,10 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
         },
       );
 
-      _speechPipeline =
-          SpeechToPrescriptionPipeline(transcriber: transcriber);
+      _speechPipeline = SpeechToPrescriptionPipeline(
+        transcriber: transcriber,
+        llmExtractor: _llmExtractor,
+      );
 
       setState(() {
         _isPipelineReady = true;
@@ -652,6 +743,54 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
         _initError = e.toString();
         _status = 'Échec initialisation Whisper: $e';
       });
+    }
+  }
+
+  Future<void> _initializeLlm() async {
+    if (_isLlmReady || _isLlmInitializing) return;
+    setState(() {
+      _llmError = null;
+      _status = 'Chargement du modèle Qwen...';
+      _isLlmInitializing = true;
+    });
+
+    _llmStopwatch?.stop();
+    _llmStopwatch = Stopwatch()..start();
+    _llmInitTimer?.cancel();
+    _llmInitTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      final elapsed = _llmStopwatch?.elapsed.inSeconds ?? 0;
+      setState(() {
+        _status = elapsed < 15
+            ? 'Chargement du modèle Qwen...'
+            : 'Chargement du modèle Qwen... (${elapsed}s)';
+      });
+    });
+
+    try {
+      final threads = Platform.numberOfProcessors.clamp(1, 6);
+      final ready = await _llmClient.loadModel(
+        assetPath: _qwenAssetPath,
+        nCtx: 2048,
+        nThreads: threads,
+      );
+      setState(() {
+        _isLlmReady = ready;
+        _status = ready ? 'Modèle Qwen prêt' : 'Échec chargement Qwen';
+        _isLlmInitializing = false;
+      });
+      if (ready && _useLlm) {
+        _process();
+      }
+    } catch (e) {
+      setState(() {
+        _llmError = e.toString();
+        _status = 'Échec chargement Qwen: $e';
+        _isLlmInitializing = false;
+      });
+    } finally {
+      _llmStopwatch?.stop();
+      _llmInitTimer?.cancel();
+      _llmInitTimer = null;
     }
   }
 }

@@ -59,6 +59,7 @@ class PatientProfile {
   final String? lastName;
   final String? gender; // e.g. "male", "female"
   final String? civility; // e.g. "M.", "Mme"
+  final String? address;
   final String? city;
   final String? email;
   final String? phone;
@@ -69,6 +70,7 @@ class PatientProfile {
     required this.lastName,
     required this.gender,
     required this.civility,
+    required this.address,
     required this.city,
     required this.email,
     required this.phone,
@@ -80,6 +82,7 @@ class PatientProfile {
         'last_name': lastName,
         'gender': gender,
         'civility': civility,
+        'address': address,
         'city': city,
         'email': email,
         'phone': phone,
@@ -533,8 +536,12 @@ int levenshtein(String a, String b) {
   final n = b.length;
   final dp = List.generate(m + 1, (_) => List<int>.filled(n + 1, 0));
 
-  for (var i = 0; i <= m; i++) dp[i][0] = i;
-  for (var j = 0; j <= n; j++) dp[0][j] = j;
+  for (var i = 0; i <= m; i++) {
+    dp[i][0] = i;
+  }
+  for (var j = 0; j <= n; j++) {
+    dp[0][j] = j;
+  }
 
   for (var i = 1; i <= m; i++) {
     for (var j = 1; j <= n; j++) {
@@ -891,10 +898,12 @@ RouteMatch? findRoute(String segment) {
   final candidates = <RouteMatch>[];
 
   void addIfFound(String pattern, String voie, String dispositif) {
-    final idx = segment.indexOf(pattern);
-    if (idx != -1) {
-      candidates.add(RouteMatch(voie: voie, dispositif: dispositif, start: idx));
-    }
+    final match =
+        RegExp('\\b${RegExp.escape(pattern)}\\b').firstMatch(segment);
+    if (match == null) return;
+    candidates.add(
+      RouteMatch(voie: voie, dispositif: dispositif, start: match.start),
+    );
   }
 
   addIfFound('vvp', 'Intraveineuse (périphérique)', 'VVP');
@@ -910,6 +919,22 @@ RouteMatch? findRoute(String segment) {
   if (candidates.isEmpty) return null;
   candidates.sort((a, b) => a.start.compareTo(b.start));
   return candidates.first;
+}
+
+int? _firstDrugAliasIndex(String segment, {int? afterIndex}) {
+  final lowerSegment = segment.toLowerCase();
+  int? bestIndex;
+  for (final drug in drugLexicon) {
+    for (final alias in drug.aliases) {
+      final idx = lowerSegment.indexOf(alias.toLowerCase());
+      if (idx == -1) continue;
+      if (afterIndex != null && idx < afterIndex) continue;
+      if (bestIndex == null || idx < bestIndex) {
+        bestIndex = idx;
+      }
+    }
+  }
+  return bestIndex;
 }
 
 /// Duration extraction: "pendant 7 jours" or "pour 7 jours" -> "7j"
@@ -993,7 +1018,7 @@ class PatientProfileExtractor {
 
   PatientProfile? _extractWithCivility(
     String scopeRaw,
-    ({String? city, String? email, String? phone}) contact,
+    ({String? address, String? city, String? email, String? phone}) contact,
   ) {
     final civilityRegex = RegExp(
       r'\b(m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)[\s,]+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)',
@@ -1019,10 +1044,10 @@ class PatientProfileExtractor {
 
   PatientProfile? _extractWithKeyword(
     String scopeRaw,
-    ({String? city, String? email, String? phone}) contact,
+    ({String? address, String? city, String? email, String? phone}) contact,
   ) {
     final keywordRegex = RegExp(
-      r'\b(?:patient(?:e)?|sortie de|au nom de)[\s:]+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)',
+      r'\b(?:patient(?:e)?|sortie de|au nom de)[\s:]+(?:m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)?\s*([A-Za-zÀ-ÖØ-öø-ÿ\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)',
       caseSensitive: false,
     );
     final match = keywordRegex.firstMatch(scopeRaw);
@@ -1049,7 +1074,8 @@ class PatientProfileExtractor {
     required String scopeRaw,
     required int matchStart,
     required int matchEnd,
-    required ({String? city, String? email, String? phone}) contact,
+    required ({String? address, String? city, String? email, String? phone})
+        contact,
   }) {
     final gender = _genderFromCivility(civility);
     final snippet = _captureSnippet(scopeRaw, matchStart, matchEnd);
@@ -1059,6 +1085,7 @@ class PatientProfileExtractor {
       lastName: lastName,
       gender: gender,
       civility: civility,
+      address: contact.address,
       city: contact.city,
       email: contact.email,
       phone: contact.phone,
@@ -1067,16 +1094,35 @@ class PatientProfileExtractor {
   }
 
   /// Extracts optional contact/location fields in a best-effort manner.
-  ({String? city, String? email, String? phone}) _extractContactInfo(
-      String scopeRaw) {
+  ({String? address, String? city, String? email, String? phone})
+      _extractContactInfo(String scopeRaw) {
     String? email;
     String? phone;
     String? city;
+    String? address;
 
     final emailMatch =
         RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}').firstMatch(scopeRaw);
     if (emailMatch != null) {
       email = emailMatch.group(0);
+    }
+
+    final addressLabelMatch = RegExp(
+      r'\b(?:adresse|address)\s*[:\-]?\s*([^\n;,]+)',
+      caseSensitive: false,
+    ).firstMatch(scopeRaw);
+    if (addressLabelMatch != null) {
+      address = addressLabelMatch.group(1)?.trim();
+    }
+
+    if (address == null) {
+      final streetMatch = RegExp(
+        r'\b\d{1,4}\s+(?:rue|av(?:enue)?|bd|boulevard|allee|allée|impasse|chemin|route|place|cours|voie)\s+[A-Za-zÀ-ÖØ-öø-ÿ\- ]+',
+        caseSensitive: false,
+      ).firstMatch(scopeRaw);
+      if (streetMatch != null) {
+        address = streetMatch.group(0)?.trim();
+      }
     }
 
     final phoneMatch =
@@ -1086,14 +1132,25 @@ class PatientProfileExtractor {
     }
 
     final cityMatch = RegExp(
-      r'\b(?:ville|city|commune)\s*[:\-]?\s*([A-Za-zÀ-ÖØ-öø-ÿ\\- ]{2,})',
+      r'\b(?:ville|city|commune)\s*[:\-]?\s*([A-Za-zÀ-ÖØ-öø-ÿ- ]{2,})',
       caseSensitive: false,
     ).firstMatch(scopeRaw);
     if (cityMatch != null) {
       city = cityMatch.group(1)?.trim();
     }
 
-    return (city: city, email: email, phone: phone);
+    if (city == null) {
+      final postalCityMatch = RegExp(
+        r'\b(\d{5})\s+([A-Za-zÀ-ÖØ-öø-ÿ- ]{2,})',
+      ).firstMatch(scopeRaw);
+      if (postalCityMatch != null) {
+        final code = postalCityMatch.group(1);
+        final name = postalCityMatch.group(2)?.trim();
+        city = [code, name].where((e) => e != null && e.isNotEmpty).join(' ');
+      }
+    }
+
+    return (address: address, city: city, email: email, phone: phone);
   }
 
   String? _genderFromCivility(String? civility) {
@@ -1280,10 +1337,14 @@ class RuleBasedExtractor {
     // Route / device
     final routeMatch = findRoute(working);
 
-    // Posology: text between dose and route (or to end)
+    // Posology: text between dose and next known marker (route or drug name).
     String? posologie;
     if (doseEndIndex != null) {
-      final end = routeMatch?.start ?? working.length;
+      final routeEnd = routeMatch?.start ?? working.length;
+      final drugAliasIdx = _firstDrugAliasIndex(working, afterIndex: doseEndIndex);
+      final end = drugAliasIdx != null && drugAliasIdx < routeEnd
+          ? drugAliasIdx
+          : routeEnd;
       if (end > doseEndIndex) {
         posologie = working.substring(doseEndIndex, end).trim();
       }

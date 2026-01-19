@@ -23,3 +23,4 @@ flutter:
   assets:
     - assets/models/
     - assets/models/whisper-small-medical-q5_1.bin
+    - assets/models/qwen2-1_5b-instruct-q4_k_m.gguf
