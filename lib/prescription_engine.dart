@@ -57,36 +57,15 @@ class Prescription {
 class PatientProfile {
   final String? firstName;
   final String? lastName;
-  final String? gender; // e.g. "male", "female"
-  final String? civility; // e.g. "M.", "Mme"
-  final String? address;
-  final String? city;
-  final String? email;
-  final String? phone;
-  final String? sourceText; // snippet used to build the profile
 
   const PatientProfile({
     required this.firstName,
     required this.lastName,
-    required this.gender,
-    required this.civility,
-    required this.address,
-    required this.city,
-    required this.email,
-    required this.phone,
-    required this.sourceText,
   });
 
   Map<String, dynamic> toJson() => {
         'first_name': firstName,
         'last_name': lastName,
-        'gender': gender,
-        'civility': civility,
-        'address': address,
-        'city': city,
-        'email': email,
-        'phone': phone,
-        'source_text': sourceText,
       };
 }
 
@@ -184,7 +163,7 @@ class TextNormalizer {
 
     // Frequencies "3 fois par jour" -> "3x/j"
     text = text.replaceAllMapped(
-      RegExp(r'\b(\d+)\s*(fois|x)\s*(par\s*jour|/jour|par jour)\b'),
+      RegExp(r'\b(\d+)\s*(fois|x)\s*(par\s*jours?|/jour|par jour)\b'),
       (m) => '${m[1]}x/j',
     );
 
@@ -991,12 +970,10 @@ class PatientProfileExtractor {
     final scopeRaw = rawText.substring(0, scopeEnd).trim();
     if (scopeRaw.isEmpty) return null;
 
-    final contact = _extractContactInfo(scopeRaw);
-
-    final civilityProfile = _extractWithCivility(scopeRaw, contact);
+    final civilityProfile = _extractWithCivility(scopeRaw);
     if (civilityProfile != null) return civilityProfile;
 
-    return _extractWithKeyword(scopeRaw, contact);
+    return _extractWithKeyword(scopeRaw);
   }
 
   int? _firstPrescriptionIndex(String lower) {
@@ -1031,36 +1008,31 @@ class PatientProfileExtractor {
 
   PatientProfile? _extractWithCivility(
     String scopeRaw,
-    ({String? address, String? city, String? email, String? phone}) contact,
   ) {
     final civilityRegex = RegExp(
-      r'\b(m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)[\s,]+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)',
+      r'\b(m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)[\s,]+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)(?:\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+))?',
       caseSensitive: false,
     );
     final match = civilityRegex.firstMatch(scopeRaw);
     if (match == null) return null;
 
-    final civility = match.group(1);
     final firstName = match.group(2);
     final lastName = match.group(3);
 
     return _buildProfile(
-      civility: civility,
       firstName: firstName,
       lastName: lastName,
       scopeRaw: scopeRaw,
       matchStart: match.start,
       matchEnd: match.end,
-      contact: contact,
     );
   }
 
   PatientProfile? _extractWithKeyword(
     String scopeRaw,
-    ({String? address, String? city, String? email, String? phone}) contact,
   ) {
     final keywordRegex = RegExp(
-      r'\b(?:patient(?:e)?|sortie de|au nom de)[\s:]+(?:m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)?\s*([A-Za-zÀ-ÖØ-öø-ÿ\-]+)\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+)',
+      r'\b(?:patient(?:e)?|sorti(?:e)? de|au nom de)[\s:]+(?:m\.?|mr|monsieur|mme\.?|madame|mlle\.?|melle|mademoiselle)?\s*([A-Za-zÀ-ÖØ-öø-ÿ\-]+)(?:\s+([A-Za-zÀ-ÖØ-öø-ÿ\-]+))?',
       caseSensitive: false,
     );
     final match = keywordRegex.firstMatch(scopeRaw);
@@ -1070,138 +1042,25 @@ class PatientProfileExtractor {
     final lastName = match.group(2);
 
     return _buildProfile(
-      civility: null,
       firstName: firstName,
       lastName: lastName,
       scopeRaw: scopeRaw,
       matchStart: match.start,
       matchEnd: match.end,
-      contact: contact,
     );
   }
 
   PatientProfile _buildProfile({
-    required String? civility,
     required String? firstName,
     required String? lastName,
     required String scopeRaw,
     required int matchStart,
     required int matchEnd,
-    required ({String? address, String? city, String? email, String? phone})
-        contact,
   }) {
-    final gender = _genderFromCivility(civility);
-    final snippet = _captureSnippet(scopeRaw, matchStart, matchEnd);
-
     return PatientProfile(
       firstName: firstName,
       lastName: lastName,
-      gender: gender,
-      civility: civility,
-      address: contact.address,
-      city: contact.city,
-      email: contact.email,
-      phone: contact.phone,
-      sourceText: snippet.isEmpty ? scopeRaw : snippet,
     );
-  }
-
-  /// Extracts optional contact/location fields in a best-effort manner.
-  ({String? address, String? city, String? email, String? phone})
-      _extractContactInfo(String scopeRaw) {
-    String? email;
-    String? phone;
-    String? city;
-    String? address;
-
-    final emailMatch =
-        RegExp(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}').firstMatch(scopeRaw);
-    if (emailMatch != null) {
-      email = emailMatch.group(0);
-    }
-
-    final addressLabelMatch = RegExp(
-      r'\b(?:adresse|address)\s*[:\-]?\s*([^\n;,]+)',
-      caseSensitive: false,
-    ).firstMatch(scopeRaw);
-    if (addressLabelMatch != null) {
-      address = addressLabelMatch.group(1)?.trim();
-    }
-
-    if (address == null) {
-      final streetMatch = RegExp(
-        r'\b\d{1,4}\s+(?:rue|av(?:enue)?|bd|boulevard|allee|allée|impasse|chemin|route|place|cours|voie)\s+[A-Za-zÀ-ÖØ-öø-ÿ\- ]+',
-        caseSensitive: false,
-      ).firstMatch(scopeRaw);
-      if (streetMatch != null) {
-        address = streetMatch.group(0)?.trim();
-      }
-    }
-
-    final phoneMatch =
-        RegExp(r'(?:\+?33\s?|0)(?:[1-9](?:[ .-]?\d){8})').firstMatch(scopeRaw);
-    if (phoneMatch != null) {
-      phone = phoneMatch.group(0)?.replaceAll(RegExp(r'[^0-9+]'), '');
-    }
-
-    final cityMatch = RegExp(
-      r'\b(?:ville|city|commune)\s*[:\-]?\s*([A-Za-zÀ-ÖØ-öø-ÿ- ]{2,})',
-      caseSensitive: false,
-    ).firstMatch(scopeRaw);
-    if (cityMatch != null) {
-      city = cityMatch.group(1)?.trim();
-    }
-
-    if (city == null) {
-      final postalCityMatch = RegExp(
-        r'\b(\d{5})\s+([A-Za-zÀ-ÖØ-öø-ÿ- ]{2,})',
-      ).firstMatch(scopeRaw);
-      if (postalCityMatch != null) {
-        final code = postalCityMatch.group(1);
-        final name = postalCityMatch.group(2)?.trim();
-        city = [code, name].where((e) => e != null && e.isNotEmpty).join(' ');
-      }
-    }
-
-    return (address: address, city: city, email: email, phone: phone);
-  }
-
-  String? _genderFromCivility(String? civility) {
-    if (civility == null) return null;
-    final lower = civility.toLowerCase();
-    if (lower == 'm' || lower == 'm.' || lower == 'mr' || lower == 'monsieur') {
-      return 'male';
-    }
-    if (lower.startsWith('mme') ||
-        lower.startsWith('mad') ||
-        lower.startsWith('mlle') ||
-        lower.startsWith('melle') ||
-        lower == 'mademoiselle') {
-      return 'female';
-    }
-    return null;
-  }
-
-  String _captureSnippet(String text, int start, int end) {
-    int leftBoundary = 0;
-    for (var i = start - 1; i >= 0; i--) {
-      final ch = text[i];
-      if (ch == '.' || ch == '\n') {
-        leftBoundary = i + 1;
-        break;
-      }
-    }
-
-    var rightBoundary = text.length;
-    for (var i = end; i < text.length; i++) {
-      final ch = text[i];
-      if (ch == '.' || ch == '\n') {
-        rightBoundary = i;
-        break;
-      }
-    }
-
-    return text.substring(leftBoundary, rightBoundary).trim();
   }
 }
 
@@ -1435,6 +1294,17 @@ class RuleBasedExtractor {
       }
     }
 
+    final frequency = _extractFrequency(working);
+    if (frequency != null) {
+      if (posologie == null || posologie.isEmpty) {
+        posologie = frequency;
+      } else if (!posologie.contains('x/j') &&
+          !posologie.contains('fois') &&
+          !posologie.contains(frequency)) {
+        posologie = '${posologie.trim()} $frequency';
+      }
+    }
+
     // Optional NER hook (currently unused)
     final nerEntities = ner.analyze(working);
     if (nerEntities.isNotEmpty) {
@@ -1454,6 +1324,20 @@ class RuleBasedExtractor {
       segmentSource: segment,
       segmentSourcePhonetic: phoneticSegment,
     );
+  }
+
+  String? _extractFrequency(String text) {
+    final xPerDayMatch = RegExp(r'\b(\d+)\s*x\s*/\s*j\b').firstMatch(text);
+    if (xPerDayMatch != null) {
+      return '${xPerDayMatch.group(1)}x/j';
+    }
+    final spokenMatch = RegExp(
+      r'\b(\d+)\s*fois\s*par\s*jours?\b',
+    ).firstMatch(text);
+    if (spokenMatch != null) {
+      return '${spokenMatch.group(1)}x/j';
+    }
+    return null;
   }
 
   List<Prescription> extract(String normalizedText) {

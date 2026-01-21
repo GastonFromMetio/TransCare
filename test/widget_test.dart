@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:prescription_normalizer/main.dart';
+import 'package:prescription_normalizer/app.dart';
 import 'package:prescription_normalizer/prescription_engine.dart';
 
 void main() {

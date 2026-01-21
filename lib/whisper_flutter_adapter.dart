@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:whisper_flutter_new/download_model.dart' show downloadModel;
 import 'package:whisper_flutter_new/whisper_flutter_new.dart';
 
 import 'speech_to_text_pipeline.dart';
@@ -12,8 +11,14 @@ import 'speech_to_text_pipeline.dart';
 /// Adapter du plugin `whisper_flutter_new` vers l'interface [SpeechTranscriber].
 /// Il télécharge le modèle au premier appel si absent (via Hugging Face).
 class WhisperFlutterNewTranscriber implements SpeechTranscriber {
-  static const defaultDownloadHost =
-      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
+  static const _minModelSizes = <WhisperModel, int>{
+    WhisperModel.tiny: 30 * 1024 * 1024,
+    WhisperModel.base: 120 * 1024 * 1024,
+    WhisperModel.small: 400 * 1024 * 1024,
+    WhisperModel.medium: 1400 * 1024 * 1024,
+    WhisperModel.largeV1: 2500 * 1024 * 1024,
+    WhisperModel.largeV2: 2500 * 1024 * 1024,
+  };
 
   WhisperFlutterNewTranscriber({
     WhisperModel model = WhisperModel.base,
@@ -29,11 +34,10 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
     this.logprobThreshold = -1.0,
     this.noSpeechThreshold = 0.6,
     this.modelDir,
-    this.downloadHost = defaultDownloadHost,
   }) : _whisper = Whisper(
           model: model,
           modelDir: modelDir,
-          downloadHost: downloadHost,
+          downloadHost: null,
         );
 
   final Whisper _whisper;
@@ -49,8 +53,6 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
   final double logprobThreshold;
   final double noSpeechThreshold;
   final String? modelDir;
-  final String? downloadHost;
-
   /// Prépare le modèle (copie l'asset ou télécharge) et retourne l'instance prête.
   static Future<WhisperFlutterNewTranscriber> initialize({
     WhisperModel model = WhisperModel.base,
@@ -65,8 +67,8 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
     double entropyThreshold = 2.4,
     double logprobThreshold = -1.0,
     double noSpeechThreshold = 0.6,
-    String? downloadHost = defaultDownloadHost,
     String? assetModelPath,
+    bool forceBundledAsset = false,
     void Function(String status)? onStatus,
   }) async {
     onStatus?.call('Préparation du modèle Whisper...');
@@ -74,55 +76,97 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
     final supportDir = await getApplicationSupportDirectory();
     final modelDir = '${supportDir.path}/whisper_models';
     await Directory(modelDir).create(recursive: true);
-    const modelFilename = 'whisper-small-medical-q5_1.bin';
+    final modelFilename = 'ggml-${model.modelName}.bin';
     final modelPath = '$modelDir/$modelFilename';
     final modelFile = File(modelPath);
-    const minValidSizeBytes = 1024 * 1024; // protect against HTML/error downloads
+    const fallbackMinValidSizeBytes =
+        1024 * 1024; // protect against HTML/error downloads
+    var expectedMinBytes =
+        _minModelSizes[model] ?? fallbackMinValidSizeBytes;
     final assetCandidates = <String>{
       if (assetModelPath != null) assetModelPath,
       'assets/models/$modelFilename',
-      // Permet de retrouver un fichier converti/renommé (ex: whisper-small-medical.bin)
-      'assets/models/whisper-small-medical-q5_1.bin',
     }.toList();
 
     final hasModelFile = modelFile.existsSync();
-    final isLikelyCorrupted =
-        hasModelFile && modelFile.lengthSync() < minValidSizeBytes;
+    final modelBytes = hasModelFile ? modelFile.lengthSync() : 0;
+    final isLikelyCorrupted = hasModelFile && modelBytes < expectedMinBytes;
 
-    if (!hasModelFile || isLikelyCorrupted) {
+    final bundledAssetPath = await _firstExistingAsset(assetCandidates);
+    final hasBundledAsset = bundledAssetPath != null;
+
+    if (forceBundledAsset && !hasBundledAsset) {
+      throw StateError(
+        'Modèle Whisper embarqué introuvable (${assetModelPath ?? 'assets/models/ggml-small.bin'}).',
+      );
+    }
+
+    if (forceBundledAsset && hasBundledAsset) {
+      onStatus?.call(
+        'Chargement du modèle Whisper embarqué (${model.modelName})...',
+      );
+      try {
+        await modelFile.delete();
+      } catch (_) {}
+      final byteData = await rootBundle.load(bundledAssetPath);
+      expectedMinBytes = byteData.lengthInBytes;
+      await modelFile.writeAsBytes(
+        byteData.buffer.asUint8List(),
+        flush: true,
+      );
+      debugPrint(
+        'Whisper model source=asset path=$modelPath bytes=${modelFile.lengthSync()}',
+      );
+    } else if (!hasModelFile || isLikelyCorrupted) {
       if (isLikelyCorrupted) {
         onStatus?.call(
           'Modèle Whisper corrompu détecté, nouveau téléchargement...',
         );
         // Clean up the bad file so the plugin does not try to load it.
-        await modelFile.delete().catchError((_) {});
+        try {
+          await modelFile.delete();
+        } catch (_) {}
       }
-      final bundledAssetPath = await _firstExistingAsset(assetCandidates);
-      final hasBundledAsset = bundledAssetPath != null;
-
       if (hasBundledAsset) {
         onStatus?.call(
           'Copie du modèle Whisper embarqué (${model.modelName})...',
         );
         final byteData = await rootBundle.load(bundledAssetPath);
+        expectedMinBytes = byteData.lengthInBytes;
         await modelFile.writeAsBytes(
           byteData.buffer.asUint8List(),
           flush: true,
         );
-      } else if (downloadHost != null) {
-        onStatus?.call(
-          'Téléchargement du modèle Whisper (${model.modelName})...',
-        );
-        await downloadModel(
-          model: model,
-          destinationPath: modelDir,
-          downloadHost: downloadHost,
+        debugPrint(
+          'Whisper model source=asset path=$modelPath bytes=${modelFile.lengthSync()}',
         );
       } else {
         throw StateError(
-          'Aucun modèle Whisper embarqué trouvé et téléchargement désactivé.',
+          'Aucun modèle Whisper embarqué trouvé. '
+          'Ajoute le modèle dans assets/models et relance.',
         );
       }
+    }
+
+    if (modelFile.existsSync() && modelFile.lengthSync() < expectedMinBytes) {
+      throw StateError(
+        'Modèle Whisper invalide (taille trop petite). '
+        'Supprime le modèle et relance la copie depuis les assets.',
+      );
+    }
+
+    final header = await _readModelHeader(modelFile);
+    final normalizedHeader = _normalizeHeader(header);
+    debugPrint(
+      'Whisper model ready: path=$modelPath bytes=${modelFile.lengthSync()} '
+      'header=$header normalized=$normalizedHeader',
+    );
+    if (!_isSupportedHeader(normalizedHeader)) {
+      throw StateError(
+        'Modèle Whisper invalide (header="$header"). '
+        'Attendu "ggml" ou "GGUF". '
+        'Remplace le fichier dans assets/models par un modèle whisper.cpp valide.',
+      );
     }
 
     return WhisperFlutterNewTranscriber(
@@ -139,8 +183,31 @@ class WhisperFlutterNewTranscriber implements SpeechTranscriber {
       logprobThreshold: logprobThreshold,
       noSpeechThreshold: noSpeechThreshold,
       modelDir: modelDir,
-      downloadHost: downloadHost,
     );
+  }
+
+  static Future<String> _readModelHeader(File modelFile) async {
+    try {
+      final raf = await modelFile.open();
+      final bytes = await raf.read(4);
+      await raf.close();
+      if (bytes.isEmpty) return 'empty';
+      final ascii = String.fromCharCodes(bytes);
+      return ascii;
+    } catch (_) {
+      return 'unreadable';
+    }
+  }
+
+  static String _normalizeHeader(String header) {
+    if (header == 'lmgg') {
+      return 'ggml';
+    }
+    return header;
+  }
+
+  static bool _isSupportedHeader(String header) {
+    return header == 'ggml' || header == 'GGUF';
   }
 
   static Future<bool> _assetExists(String assetPath) async {
