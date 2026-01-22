@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthResult {
   const AuthResult({
@@ -49,11 +50,33 @@ class AuthService {
 
   static final instance = AuthService();
   static const String _defaultBaseUrl =
-      String.fromEnvironment('API_BASE_URL', defaultValue: 'http://transcare.713.fr');
+      String.fromEnvironment('API_BASE_URL', defaultValue: 'https://transcare.713.fr');
   static const bool _allowGuestAccess = false;
+  static const String _tokenStorageKey = 'auth_token';
+  static const String _userStorageKey = 'auth_user';
 
   final String _baseUrl;
   String? _token;
+  AuthUser? _cachedUser;
+
+  String get baseUrl => _baseUrl;
+  String? get token => _token;
+
+  Future<void> initialize() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString(_tokenStorageKey);
+    final userJson = prefs.getString(_userStorageKey);
+    if (userJson != null && userJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(userJson);
+        if (decoded is Map<String, dynamic>) {
+          _cachedUser = AuthUser.fromJson(decoded);
+        }
+      } catch (_) {
+        _cachedUser = null;
+      }
+    }
+  }
 
   Future<AuthResult> login({
     required String email,
@@ -85,6 +108,8 @@ class AuthService {
         );
       }
       _token = token;
+      _cachedUser = user;
+      await _persistSession(token: token, user: user);
       return AuthResult(
         success: true,
         message: 'Connexion reussie.',
@@ -138,6 +163,8 @@ class AuthService {
         );
       }
       _token = token;
+      _cachedUser = user;
+      await _persistSession(token: token, user: user);
       return AuthResult(
         success: true,
         message: 'Inscription reussie.',
@@ -161,6 +188,8 @@ class AuthService {
   Future<AuthResult> logout() async {
     if (_baseUrl.isEmpty || _token == null) {
       _token = null;
+      _cachedUser = null;
+      await _clearSession();
       return const AuthResult(
         success: true,
         message: 'Deconnexion locale.',
@@ -175,6 +204,8 @@ class AuthService {
         token: _token,
       );
       _token = null;
+      _cachedUser = null;
+      await _clearSession();
       return const AuthResult(
         success: true,
         message: 'Deconnexion reussie.',
@@ -182,6 +213,8 @@ class AuthService {
     } catch (error) {
       if (_allowGuestAccess) {
         _token = null;
+        _cachedUser = null;
+        await _clearSession();
         return AuthResult(
           success: true,
           message: 'Deconnexion locale (mode invite): $error',
@@ -196,15 +229,50 @@ class AuthService {
 
   Future<AuthUser?> fetchUserProfile() async {
     if (_baseUrl.isEmpty || _token == null) {
-      return null;
+      return _cachedUser;
     }
     try {
       final response = await _getJson(_baseUrl, '/api/auth/user', token: _token);
-      return _extractUser(response);
+      final user = _extractUser(response);
+      if (user != null) {
+        _cachedUser = user;
+        final token = _token;
+        if (token != null) {
+          await _persistSession(token: token, user: user);
+        }
+      }
+      return user ?? _cachedUser;
     } catch (_) {
-      return null;
+      return _cachedUser;
     }
   }
+
+  Future<void> _persistSession({
+    required String token,
+    required AuthUser? user,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenStorageKey, token);
+    if (user != null) {
+      await prefs.setString(_userStorageKey, jsonEncode(_toJson(user)));
+    }
+  }
+
+  Future<void> _clearSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_tokenStorageKey);
+    await prefs.remove(_userStorageKey);
+  }
+}
+
+Map<String, dynamic> _toJson(AuthUser user) {
+  return <String, dynamic>{
+    'id': user.id,
+    'name': user.name,
+    'email': user.email,
+    'login_count': user.loginCount,
+    'last_login_at': user.lastLoginAt,
+  };
 }
 
 Future<Map<String, dynamic>> _postJson(

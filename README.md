@@ -1,86 +1,95 @@
-# Prescription Normalizer
+# TransCare
 
-Normalisation et extraction offline d'ordonnances dictées.
+TransCare est une application mobile de transcription vocale medicale. Elle permet de dicter une prescription, d'obtenir une transcription locale (offline) et d'envoyer les donnees a l'API pour traitement et suivi.
 
-## Pipeline vocale (speech to text -> normalisation -> extraction)
+## Contexte
 
-- `lib/speech_to_text_pipeline.dart` expose une interface `SpeechTranscriber` et
-  un pipeline `SpeechToPrescriptionPipeline` qui enchaîne la transcription, la
-  normalisation puis l'extraction des prescriptions.
-- Un adaptateur `WhisperTranscriber` est prévu : il attend une fonction
-  `Future<String> Function(String audioPath)` qui appelle votre binding
-  Whisper (FFI `whisper.cpp`, `whisper_dart`, etc.).
+- Objectif: simplifier la saisie de prescriptions par dictée vocale et fiabiliser les informations medicales.
+- Cible: prescripteurs (mobile) et prestataires (backend/validation).
+- Fonctionnement principal: transcription locale avec Whisper, puis interaction avec l'API pour authentification et flux prescriptions.
 
-### Exemple d'intégration Whisper
-#### Variante avec `whisper_flutter_new`
+## Fonctionnement de l'app
 
-1) Dépendances  
-   - `flutter pub add whisper_flutter_new` (déjà ajouté).  
-   - Optionnel : `record` pour capturer l'audio en WAV 16 kHz mono.
-2) Enregistrement audio (ex. plugin `record`)  
-   - Capturer en PCM mono 16 kHz, enregistrer dans un fichier `.wav`.
-3) Transcription + pipeline (`lib/whisper_flutter_adapter.dart`)  
-   ```dart
-   import 'package:whisper_flutter_new/whisper_flutter_new.dart';
-   import 'speech_to_text_pipeline.dart';
-   import 'whisper_flutter_adapter.dart';
+1) Authentification
+   - Inscription, connexion, recuperation du profil, deconnexion.
+   - Token Bearer stocke localement.
+2) Dictée vocale
+   - Enregistrement audio en WAV 16 kHz mono.
+   - Transcription locale avec Whisper (offline).
+3) Flux prescriptions
+   - Envoi de la transcription a l'API.
+   - Recuperation des details, correction, validation et suivi de statut.
 
-   // A appeler après avoir obtenu le chemin du WAV
-   Future<void> runPipeline(String audioPath) async {
-     final transcriber = WhisperFlutterNewTranscriber(
-       model: WhisperModel.base, // tiny/base/small/medium/large-v2
-       language: 'fr',           // "auto" si langue inconnue
-       translate: false,         // true si tu veux forcer la traduction en anglais
-     );
+## API (resume)
 
-     final pipeline = SpeechToPrescriptionPipeline(transcriber: transcriber);
-     final result = await pipeline.transcribeAndExtract(audioPath);
+Base URL: `/api`
 
-     debugPrint('Transcript brut: ${result.transcript}');
-     debugPrint('Texte normalisé: ${result.normalizedTranscript}');
-     debugPrint('Prescriptions: ${result.prescriptions}');
-   }
+Public:
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /health`
+
+Protege (Bearer):
+- `POST /auth/logout`
+- `GET /auth/user`
+- `GET /prescriptions`
+- `POST /prescriptions`
+- `GET /prescriptions/{id}`
+- `GET /prescriptions/{id}/poll`
+- `PATCH /prescriptions/{id}`
+- `POST /prescriptions/{id}/validate`
+- `POST /prescriptions/status`
+- `GET /prescriptions/pool`
+- `GET /prescriptions/pending-approval`
+- `POST /prescriptions/{id}/claim`
+- `POST /prescriptions/{id}/approve`
+- `POST /prescriptions/{id}/dispense`
+
+## Mise en route (smartphone)
+
+### Prerequis
+
+- Flutter installe (`flutter doctor` OK)
+- Un appareil Android ou iOS en mode developpeur
+- Permissions micro actives
+
+### Android (appareil physique)
+
+1) Activer le mode developpeur et le debogage USB.
+2) Connecter le telephone en USB.
+3) Verifier l'appareil:
+   ```bash
+   flutter devices
    ```
-   - Le plugin télécharge le modèle (base par défaut) au premier appel. Sans
-     réseau, fournis un `modelDir` contenant déjà le `.bin` et passe
-     `downloadHost: null` si besoin.
-   - Un modèle médical converti (`assets/models/whisper-small-medical.bin`)
-     est fourni et chargé sans téléchargement via l’option « Whisper Small
-     (médical embarqué) ».
-4) Permissions plateforme  
-   - Android : `RECORD_AUDIO` dans `AndroidManifest.xml`.  
-   - iOS : clé `NSMicrophoneUsageDescription` dans `Info.plist`.  
-   - MacOS : clé micro équivalente.
+4) Lancer l'app:
+   ```bash
+   flutter run
+   ```
 
-### UI actuelle
-- Boutons « Dicter » / « Stop + Transcrire » dans l'écran principal déclenchent
-  l'enregistrement (`record`), la transcription Whisper (`whisper_flutter_new`)
-  puis affichent transcript/texte normalisé/JSON.
+### iOS (appareil physique)
 
-### Capture audio avec `record`
+1) Activer le mode developpeur sur l'iPhone.
+2) Ouvrir `ios/Runner.xcworkspace` dans Xcode.
+3) Selectionner l'iPhone comme cible et lancer.
 
-```dart
-import 'package:record/record.dart';
+### Configuration API
 
-final recorder = AudioRecorder();
+Par defaut, l'app utilise:
 
-Future<String?> captureWav16k() async {
-  if (!await recorder.hasPermission()) return null;
-
-  await recorder.start(
-    const RecordConfig(
-      encoder: AudioEncoder.wav,
-      sampleRate: 16000, // Whisper attend 16 kHz
-      numChannels: 1,
-      bitRate: 256000, // 16kHz * 16 bits * 1 ch
-    ),
-    path: '/tmp/audio.wav', // utilise path_provider en prod
-  );
-
-  // ... attendre la fin de dictée (timer/bouton stop) ...
-  final path = await recorder.stop(); // chemin du .wav à passer au pipeline
-  return path;
-}
+```
+API_BASE_URL=http://transcare.713.fr
 ```
 
-Une fois `path` récupéré, passe-le à `SpeechToPrescriptionPipeline.transcribeAndExtract(path)`.
+Pour pointer vers un autre serveur:
+
+```bash
+flutter run --dart-define=API_BASE_URL=http://votre-serveur
+```
+
+## Notes techniques
+
+- Transcription offline via Whisper (ex: `whisper_flutter_new`).
+- Enregistrement WAV 16 kHz mono requis pour de bonnes performances.
+- Permissions:
+  - Android: `RECORD_AUDIO` dans `AndroidManifest.xml`
+  - iOS: `NSMicrophoneUsageDescription` dans `Info.plist`
