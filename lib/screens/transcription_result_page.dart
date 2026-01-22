@@ -4,8 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../route_observer.dart';
 import '../speech_to_text_pipeline.dart';
+import '../services/auth_service.dart';
 import '../services/prescription_service.dart';
+import '../widgets/top_notification.dart';
 
 const List<String> _medicineOptions = [
   'Ceftriaxone',
@@ -63,12 +66,13 @@ class TranscriptionResultPage extends StatefulWidget {
 }
 
 class _TranscriptionResultPageState extends State<TranscriptionResultPage>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin, RouteAware {
   late final TextEditingController _transcriptionController;
   late final TextEditingController _patientNameController;
   late final TextEditingController _dobController;
   late final AnimationController _aiController;
   final List<_MedicationForm> _medications = [];
+  late final Future<AuthUser?> _profileFuture;
   bool _isProcessing = true;
   String? _loadError;
   bool _isSubmitting = false;
@@ -88,6 +92,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   int _pdfPollAttempts = 0;
   Timer? _pollTimer;
   bool _pausePollingWhenInactive = false;
+  bool _isRouteSubscribed = false;
 
   @override
   void initState() {
@@ -96,6 +101,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
     _transcriptionController = TextEditingController();
     _patientNameController = TextEditingController();
     _dobController = TextEditingController();
+    _profileFuture = AuthService.instance.fetchUserProfile();
     _aiController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2600),
@@ -104,7 +110,20 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (!_isRouteSubscribed && route is PageRoute) {
+      routeObserver.subscribe(this, route);
+      _isRouteSubscribed = true;
+    }
+  }
+
+  @override
   void dispose() {
+    if (_isRouteSubscribed) {
+      routeObserver.unsubscribe(this);
+    }
     _pollTimer?.cancel();
     _pdfPollTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -116,6 +135,11 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
       medication.dispose();
     }
     super.dispose();
+  }
+
+  @override
+  void didPopNext() {
+    _refreshOnReturn();
   }
 
   @override
@@ -204,6 +228,39 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
     _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
       _pollOnce(id);
     });
+  }
+
+  void _refreshOnReturn() {
+    setState(() {
+      _profileFuture = AuthService.instance.fetchUserProfile();
+    });
+    final id = _prescriptionId ?? _formPrescriptionId;
+    if (id == null || id.isEmpty) return;
+    _refreshPrescription(id);
+  }
+
+  Future<void> _refreshPrescription(String id) async {
+    try {
+      final service = PrescriptionService();
+      final payload = await service.fetchPrescription(id);
+      if (!mounted) return;
+      setState(() {
+        _backendPayload = payload;
+      });
+      _hydratePrescriptionFromPayload(payload);
+      final pdfUrl = _extractPdfUrl(payload);
+      if (pdfUrl != null && pdfUrl.isNotEmpty) {
+        setState(() {
+          _pdfUrl = pdfUrl;
+          _isWaitingForPdf = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _backendError = 'Rafraichissement echoue: $e';
+      });
+    }
   }
 
   Future<void> _pollOnce(String id) async {
@@ -320,9 +377,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
         _pdfUrl = null;
         _pdfError = null;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ordonnance validee et envoyee.')),
-      );
+      _showNotification('Ordonnance validee et envoyee.');
       _startPdfPolling(id);
     } catch (e) {
       if (!mounted) return;
@@ -397,6 +452,10 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   String? _emptyToNull(String value) {
     if (value.trim().isEmpty) return null;
     return value.trim();
+  }
+
+  void _showNotification(String message) {
+    TopNotification.show(context, message);
   }
 
   @override
@@ -479,6 +538,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
                     ),
                   ),
                 const SizedBox(height: 16),
+                if (!isReady) _buildProfileFallback(context),
                 if (isReady)
                   Opacity(
                     opacity: isFormLocked ? 0.5 : 1,
@@ -505,6 +565,94 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildProfileFallback(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return FutureBuilder<AuthUser?>(
+      future: _profileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final user = snapshot.data;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Profil',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                if (user == null)
+                  Text(
+                    'Aucune information de profil disponible.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: colorScheme.onSurfaceVariant),
+                  )
+                else
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: colorScheme.primary.withOpacity(0.12),
+                        child: Icon(
+                          Icons.person,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              user.name.isNotEmpty ? user.name : 'Utilisateur',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              user.email,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 12),
+                Text(
+                  'Aucune ordonnance detectee pour cette transcription.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

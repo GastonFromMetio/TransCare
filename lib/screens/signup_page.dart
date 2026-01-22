@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../widgets/top_notification.dart';
 
 class SignupPage extends StatefulWidget {
   const SignupPage({super.key});
@@ -51,9 +52,7 @@ class _SignupPageState extends State<SignupPage> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    TopNotification.show(context, result.message);
   }
 
   @override

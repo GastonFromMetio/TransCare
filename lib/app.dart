@@ -6,6 +6,8 @@ import 'screens/login_page.dart';
 import 'screens/transcare_shell_page.dart';
 import 'screens/profile_page.dart';
 import 'screens/signup_page.dart';
+import 'services/auth_service.dart';
+import 'route_observer.dart';
 
 class TranscareApp extends StatelessWidget {
   const TranscareApp({super.key});
@@ -31,10 +33,12 @@ class TranscareApp extends StatelessWidget {
       bodyColor: colorScheme.onSurface,
       displayColor: colorScheme.onSurface,
     );
+    final hasSession = AuthService.instance.token?.isNotEmpty ?? false;
 
     return MaterialApp(
       title: 'TransCare',
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [routeObserver],
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -100,7 +104,7 @@ class TranscareApp extends StatelessWidget {
           ),
         ),
       ),
-      initialRoute: '/auth',
+      initialRoute: hasSession ? '/home' : '/auth',
       routes: {
         '/auth': (_) => const AuthLandingPage(),
         '/login': (_) => const LoginPage(),

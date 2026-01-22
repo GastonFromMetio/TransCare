@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../widgets/top_notification.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -29,17 +30,13 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature bientot disponible.')),
-    );
+    TopNotification.show(context, '$feature bientot disponible.');
   }
 
   Future<void> _handleLogout() async {
     final result = await AuthService.instance.logout();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    TopNotification.show(context, result.message);
     if (result.success) {
       Navigator.of(context).pushNamedAndRemoveUntil('/auth', (_) => false);
     }

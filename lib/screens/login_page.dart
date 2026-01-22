@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import '../widgets/top_notification.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -46,9 +47,7 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    TopNotification.show(context, result.message);
   }
 
   @override
@@ -189,11 +188,9 @@ class _LoginPageState extends State<LoginPage> {
                   Center(
                     child: TextButton(
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content:
-                                Text('Reinitialisation du mot de passe a venir.'),
-                          ),
+                        TopNotification.show(
+                          context,
+                          'Reinitialisation du mot de passe a venir.',
                         );
                       },
                       child: const Text('Mot de passe oublié ?'),
