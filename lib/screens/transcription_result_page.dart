@@ -72,7 +72,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   late final TextEditingController _dobController;
   late final AnimationController _aiController;
   final List<_MedicationForm> _medications = [];
-  late final Future<AuthUser?> _profileFuture;
+  late Future<AuthUser?> _profileFuture;
   bool _isProcessing = true;
   String? _loadError;
   bool _isSubmitting = false;
@@ -355,7 +355,32 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   }
 
   void _markUserEdited([String? _]) {
-    _hasUserEdited = true;
+    if (!mounted) return;
+    setState(() {
+      _hasUserEdited = true;
+    });
+  }
+
+  bool _hasIncompleteMedications() {
+    for (final medication in _medications) {
+      final name = medication.nameController.text.trim();
+      final posology = medication.posologyController.text.trim();
+      final duration = medication.durationController.text.trim();
+      final path = medication.pathController.text.trim();
+      final isAllEmpty =
+          name.isEmpty && posology.isEmpty && duration.isEmpty && path.isEmpty;
+      if (isAllEmpty) {
+        return true;
+      }
+      final isComplete = name.isNotEmpty &&
+          posology.isNotEmpty &&
+          duration.isNotEmpty &&
+          path.isNotEmpty;
+      if (!isComplete) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _validatePrescription() async {
@@ -949,7 +974,9 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _isValidating ? null : _validatePrescription,
+                onPressed: _isValidating || _hasIncompleteMedications()
+                    ? null
+                    : _validatePrescription,
                 child: _isValidating
                     ? const SizedBox(
                         width: 18,

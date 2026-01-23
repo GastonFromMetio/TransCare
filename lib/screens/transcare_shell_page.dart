@@ -12,6 +12,15 @@ class TranscareShellPage extends StatefulWidget {
 
 class _TranscareShellPageState extends State<TranscareShellPage> {
   int _currentIndex = 0;
+  final GlobalKey<PrescriptionsPageState> _prescriptionsKey =
+      GlobalKey<PrescriptionsPageState>();
+
+  void _setIndex(int index) {
+    if (index == 0) {
+      _prescriptionsKey.currentState?.refreshOnReturn();
+    }
+    setState(() => _currentIndex = index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,9 +30,9 @@ class _TranscareShellPageState extends State<TranscareShellPage> {
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
-          children: const [
-            PrescriptionsPage(),
-            TranscareHomePage(),
+          children: [
+            PrescriptionsPage(key: _prescriptionsKey),
+            const TranscareHomePage(),
           ],
         ),
         bottomNavigationBar: SafeArea(
@@ -47,14 +56,14 @@ class _TranscareShellPageState extends State<TranscareShellPage> {
                   icon: Icons.receipt_long_outlined,
                   label: 'Ordonnances',
                   isActive: _currentIndex == 0,
-                  onTap: () => setState(() => _currentIndex = 0),
+                  onTap: () => _setIndex(0),
                 ),
                 const SizedBox(width: 8),
                 _NavItem(
                   icon: Icons.mic_none,
                   label: 'Nouvelle',
                   isActive: _currentIndex == 1,
-                  onTap: () => setState(() => _currentIndex = 1),
+                  onTap: () => _setIndex(1),
                 ),
               ],
             ),

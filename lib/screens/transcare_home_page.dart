@@ -285,7 +285,7 @@ class _TranscareHomePageState extends State<TranscareHomePage> {
       _initError = null;
       setState(() {
         _status = WhisperModelLoader.status.value.isEmpty
-            ? 'Préparation du modèle Whisper...'
+            ? 'Préparation du Whisper...'
             : WhisperModelLoader.status.value;
       });
 
@@ -296,7 +296,7 @@ class _TranscareHomePageState extends State<TranscareHomePage> {
       setState(() {
         _isPipelineReady = true;
         _isInitializing = false;
-        _status = 'Modèle Whisper prêt';
+        _status = 'Whisper prêt';
       });
     } catch (e) {
       setState(() {

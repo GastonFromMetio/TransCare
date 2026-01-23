@@ -80,6 +80,10 @@ class _TopNotificationBannerState extends State<_TopNotificationBanner>
         TextStyle(
           color: widget.colorScheme.onSurface,
         );
+    final backgroundColor = Color.alphaBlend(
+      widget.colorScheme.primary.withOpacity(0.06),
+      widget.colorScheme.surfaceVariant,
+    );
     return SafeArea(
       child: Align(
         alignment: Alignment.topCenter,
@@ -92,9 +96,12 @@ class _TopNotificationBannerState extends State<_TopNotificationBanner>
               child: FadeTransition(
                 opacity: _fadeAnimation,
                 child: Material(
-                  color: widget.colorScheme.surface,
+                  color: backgroundColor,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
+                    side: BorderSide(
+                      color: widget.colorScheme.outlineVariant.withOpacity(0.6),
+                    ),
                   ),
                   elevation: 0,
                   child: InkWell(

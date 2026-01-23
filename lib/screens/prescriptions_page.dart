@@ -7,10 +7,10 @@ class PrescriptionsPage extends StatefulWidget {
   const PrescriptionsPage({super.key});
 
   @override
-  State<PrescriptionsPage> createState() => _PrescriptionsPageState();
+  State<PrescriptionsPage> createState() => PrescriptionsPageState();
 }
 
-class _PrescriptionsPageState extends State<PrescriptionsPage> {
+class PrescriptionsPageState extends State<PrescriptionsPage> {
   late Future<List<Map<String, dynamic>>> _prescriptionsFuture;
   late Future<AuthUser?> _profileFuture;
 
@@ -34,6 +34,13 @@ class _PrescriptionsPageState extends State<PrescriptionsPage> {
       _prescriptionsFuture = _loadPrescriptions();
       _profileFuture = _loadProfile();
     });
+  }
+
+  void refreshOnReturn() {
+    if (!mounted) {
+      return;
+    }
+    _refresh();
   }
 
   @override
