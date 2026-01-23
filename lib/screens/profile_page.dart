@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/auth_service.dart';
+import 'signature_pad_page.dart';
 import '../widgets/top_notification.dart';
 
 class ProfilePage extends StatefulWidget {
@@ -166,6 +167,17 @@ class _ProfilePageState extends State<ProfilePage> {
                       label: 'Historique des ordonnances',
                       onTap: () =>
                           _showComingSoon('Historique des ordonnances'),
+                    ),
+                    _ProfileActionTile(
+                      icon: Icons.draw_outlined,
+                      label: 'Ma signature',
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SignaturePadPage(),
+                          ),
+                        );
+                      },
                     ),
                     _ProfileActionTile(
                       icon: Icons.settings_outlined,

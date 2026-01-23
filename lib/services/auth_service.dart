@@ -54,6 +54,7 @@ class AuthService {
   static const bool _allowGuestAccess = false;
   static const String _tokenStorageKey = 'auth_token';
   static const String _userStorageKey = 'auth_user';
+  static const String _signatureStorageKey = 'user_signature_base64';
 
   final String _baseUrl;
   String? _token;
@@ -145,7 +146,7 @@ class AuthService {
     try {
       final response = await _postJson(
         _baseUrl,
-        '/api/auth/register',
+        '/api/auth/register/mobile',
         body: <String, dynamic>{
           'name': name,
           'email': email,
@@ -262,6 +263,60 @@ class AuthService {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenStorageKey);
     await prefs.remove(_userStorageKey);
+  }
+
+  Future<void> saveSignatureBase64(String base64) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_signatureStorageKey, base64);
+  }
+
+  Future<String?> loadSignatureBase64() async {
+    final prefs = await SharedPreferences.getInstance();
+    final value = prefs.getString(_signatureStorageKey);
+    if (value == null || value.trim().isEmpty) return null;
+    return value;
+  }
+
+  Future<void> updateSignature(String base64) async {
+    final token = _token;
+    if (token == null || token.isEmpty) {
+      throw StateError('Authentification requise.');
+    }
+    await _postJson(
+      _baseUrl,
+      '/api/auth/signature',
+      body: <String, dynamic>{
+        'signature_base64': base64,
+        'signature': base64,
+      },
+      token: token,
+    );
+  }
+
+  Future<bool> hasSignature() async {
+    final token = _token;
+    if (token == null || token.isEmpty) {
+      throw StateError('Authentification requise.');
+    }
+    final response = await _getJson(
+      _baseUrl,
+      '/api/auth/signature',
+      token: token,
+    );
+    final data = response['data'];
+    if (data is Map<String, dynamic>) {
+      final value = data['has_signature'] ??
+          data['hasSignature'] ??
+          data['signature'] ??
+          data['exists'];
+      if (value is bool) return value;
+    }
+    final direct = response['has_signature'] ??
+        response['hasSignature'] ??
+        response['signature'] ??
+        response['exists'];
+    if (direct is bool) return direct;
+    return false;
   }
 }
 

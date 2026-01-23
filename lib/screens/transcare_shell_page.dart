@@ -4,16 +4,24 @@ import 'prescriptions_page.dart';
 import 'transcare_home_page.dart';
 
 class TranscareShellPage extends StatefulWidget {
-  const TranscareShellPage({super.key});
+  const TranscareShellPage({super.key, this.initialIndex = 0});
+
+  final int initialIndex;
 
   @override
   State<TranscareShellPage> createState() => _TranscareShellPageState();
 }
 
 class _TranscareShellPageState extends State<TranscareShellPage> {
-  int _currentIndex = 0;
+  late int _currentIndex;
   final GlobalKey<PrescriptionsPageState> _prescriptionsKey =
       GlobalKey<PrescriptionsPageState>();
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, 1);
+  }
 
   void _setIndex(int index) {
     if (index == 0) {

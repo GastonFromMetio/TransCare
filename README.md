@@ -28,7 +28,28 @@ TransCare est une application mobile de transcription vocale medicale. Elle perm
 4) Polling de traitement (`GET /prescriptions/{id}/poll`) jusqu'au resultat.
 5) Affichage des champs patient/medicaments, corrections eventuelles.
 6) Sauvegarde des corrections (`PATCH /prescriptions/{id}`).
-7) Validation et mise a jour du statut (`POST /prescriptions/{id}/validate`, puis flux de suivi).
+7) Generation du PDF et affichage sur une page dediee.
+8) Si la signature existe deja, bouton "Valider" (appel `POST /prescriptions/{id}/validate` sans JSON).
+9) Si pas de signature, affichage de la page de signature avant le PDF, puis appel `POST /prescriptions/{id}/validate`.
+
+## Backend (Laravel 12) - Documentation technique
+
+API REST pour application Flutter, avec authentification par token, Docker et deploiement automatise.
+
+### Objectifs d'integration (Mobile <-> Backend <-> LLM)
+
+- (M) Envoyer la transcription au backend et recevoir l'accuse de reception.
+- (B) Utiliser le texte et un schema JSON pour requeter un LLM et produire un JSON structure.
+- (M) Polling pour recuperer l'ordonnance (JSON) ou "en attente".
+- (B) Stocker le JSON LLM jusqu'a demande du mobile.
+- (B) Retourner le JSON au mobile lors du polling.
+- (M) Presenter l'ordonnance, accepter validation ou correction utilisateur.
+- (M) Envoyer les modifications au backend.
+- (B) Appliquer les modifications et stocker l'ordonnance en base.
+- (B) Exposer la liste des ordonnances aux utilisateurs backend.
+- (B) Mettre a jour le statut apres approbation backend.
+- (M) Demander regulierement l'etat des ordonnances en attente.
+- (M) Passer les ordonnances approuvees a l'historique.
 
 ## Technos utilisees
 
@@ -44,13 +65,16 @@ TransCare est une application mobile de transcription vocale medicale. Elle perm
 Base URL: `/api`
 
 Public:
-- `POST /auth/register`
+- `POST /auth/register/mobile` (prescripteur)
+- `POST /auth/register/web` (prestataire)
 - `POST /auth/login`
 - `GET /health`
 
 Protege (Bearer):
 - `POST /auth/logout`
 - `GET /auth/user`
+- `POST /auth/signature`
+- `GET /auth/signature`
 - `GET /prescriptions`
 - `POST /prescriptions`
 - `GET /prescriptions/{id}`

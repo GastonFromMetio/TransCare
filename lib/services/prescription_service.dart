@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
@@ -110,18 +111,26 @@ class PrescriptionService {
     );
   }
 
-  Future<Map<String, dynamic>> validatePrescription(
-    String id,
-    Map<String, dynamic> payload,
-  ) async {
+  Future<Map<String, dynamic>> validatePrescription(String id) async {
     final token = _authService.token;
     if (token == null || token.isEmpty) {
       throw StateError('Authentification requise.');
     }
-    return _postJson(
+    return _postEmpty(
       _authService.baseUrl,
       '/api/prescriptions/$id/validate',
-      body: payload,
+      token: token,
+    );
+  }
+
+  Future<Uint8List> fetchPrescriptionPdfBytes(String id) async {
+    final token = _authService.token;
+    if (token == null || token.isEmpty) {
+      throw StateError('Authentification requise.');
+    }
+    return _getBytes(
+      _authService.baseUrl,
+      '/api/prescriptions/$id/pdf',
       token: token,
     );
   }
@@ -260,6 +269,68 @@ Future<Map<String, dynamic>> _patchJson(
     debugPrint('PATCH $uri');
     debugPrint('Request body: ${jsonEncode(body)}');
     request.add(utf8.encode(jsonEncode(body)));
+    final response = await request.close();
+    final text = await response.transform(utf8.decoder).join();
+    final status = response.statusCode;
+    debugPrint('Response $status from $uri');
+    debugPrint('Response body: $text');
+    if (status < 200 || status >= 300) {
+      throw HttpException('HTTP $status: $text', uri: uri);
+    }
+    if (text.isEmpty) {
+      return <String, dynamic>{};
+    }
+    final decoded = jsonDecode(text);
+    if (decoded is Map<String, dynamic>) {
+      return decoded;
+    }
+    return <String, dynamic>{'data': decoded};
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<Uint8List> _getBytes(
+  String baseUrl,
+  String path, {
+  String? token,
+}) async {
+  final client = HttpClient();
+  try {
+    final uri = Uri.parse('$baseUrl$path');
+    final request = await client.getUrl(uri);
+    if (token != null && token.isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    }
+    request.headers.set(HttpHeaders.acceptHeader, 'application/pdf');
+    debugPrint('GET $uri');
+    final response = await request.close();
+    final status = response.statusCode;
+    final bytes = await consolidateHttpClientResponseBytes(response);
+    debugPrint('Response $status from $uri');
+    if (status < 200 || status >= 300) {
+      final text = utf8.decode(bytes, allowMalformed: true);
+      throw HttpException('HTTP $status: $text', uri: uri);
+    }
+    return bytes;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<Map<String, dynamic>> _postEmpty(
+  String baseUrl,
+  String path, {
+  String? token,
+}) async {
+  final client = HttpClient();
+  try {
+    final uri = Uri.parse('$baseUrl$path');
+    final request = await client.postUrl(uri);
+    if (token != null && token.isNotEmpty) {
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    }
+    debugPrint('POST $uri (no body)');
     final response = await request.close();
     final text = await response.transform(utf8.decoder).join();
     final status = response.statusCode;

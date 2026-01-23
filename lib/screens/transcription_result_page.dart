@@ -3,12 +3,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../route_observer.dart';
 import '../speech_to_text_pipeline.dart';
 import '../services/auth_service.dart';
 import '../services/prescription_service.dart';
+import 'prescription_pdf_page.dart';
 import '../widgets/top_notification.dart';
 
 const List<String> _medicineOptions = [
@@ -91,6 +91,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
   String? _pdfError;
   Timer? _pdfPollTimer;
   int _pdfPollAttempts = 0;
+  bool _didOpenPdf = false;
   Timer? _pollTimer;
   bool _pausePollingWhenInactive = false;
   bool _isRouteSubscribed = false;
@@ -251,10 +252,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
       _hydratePrescriptionFromPayload(payload);
       final pdfUrl = _extractPdfUrl(payload);
       if (pdfUrl != null && pdfUrl.isNotEmpty) {
-        setState(() {
-          _pdfUrl = pdfUrl;
-          _isWaitingForPdf = false;
-        });
+        await _handlePdfReady(id, pdfUrl: pdfUrl);
       }
     } catch (e) {
       if (!mounted) return;
@@ -396,7 +394,6 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
       final service = PrescriptionService();
       final payload = _buildPrescriptionPayload();
       await service.updatePrescription(id, payload);
-      await service.validatePrescription(id, payload);
       if (!mounted) return;
       setState(() {
         _isValidating = false;
@@ -404,7 +401,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
         _pdfUrl = null;
         _pdfError = null;
       });
-      _showNotification('Ordonnance validee et envoyee.');
+      _showNotification('Corrections enregistrees.');
       _startPdfPolling(id);
     } catch (e) {
       if (!mounted) return;
@@ -438,18 +435,15 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
         return;
       }
       final service = PrescriptionService();
-      final payload = await service.fetchPrescription(id);
+      await service.fetchPrescriptionPdfBytes(id);
       if (!mounted) return;
-      final url = _extractPdfUrl(payload);
-      if (url == null || url.isEmpty) {
+      _pdfPollTimer?.cancel();
+      await _handlePdfReady(id);
+    } catch (e) {
+      final message = e.toString();
+      if (message.contains('HTTP 404') || message.contains('HTTP 403')) {
         return;
       }
-      _pdfPollTimer?.cancel();
-      setState(() {
-        _pdfUrl = url;
-        _isWaitingForPdf = false;
-      });
-    } catch (e) {
       if (!mounted) return;
       setState(() {
         _pdfError = 'Recuperation PDF echouee: $e';
@@ -457,10 +451,26 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
     }
   }
 
-  Future<void> _openPdf(String url) async {
-    final uri = Uri.tryParse(url);
-    if (uri == null) return;
-    await launchUrl(uri, mode: LaunchMode.inAppWebView);
+  Future<void> _openPdf(String id) async {
+    if (id.trim().isEmpty) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PrescriptionPdfPage(
+          prescriptionId: id,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handlePdfReady(String id, {String? pdfUrl}) async {
+    if (!mounted) return;
+    setState(() {
+      _pdfUrl = pdfUrl ?? 'ready';
+      _isWaitingForPdf = false;
+    });
+    if (_didOpenPdf) return;
+    _didOpenPdf = true;
+    await _openPdf(id);
   }
 
   Map<String, dynamic> _buildPrescriptionPayload() {
@@ -1025,7 +1035,7 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Text('Valider l\'ordonnance'),
+                    : const Text('Enregistrer les corrections'),
               ),
             ),
           ],
@@ -1113,9 +1123,9 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
               width: double.infinity,
               child: OutlinedButton.icon(
                 onPressed: () {
-                  final url = _pdfUrl;
-                  if (url == null) return;
-                  _openPdf(url);
+                  final id = _prescriptionId ?? _formPrescriptionId;
+                  if (id == null || id.isEmpty) return;
+                  _openPdf(id);
                 },
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('Ouvrir le PDF'),
