@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'services/auth_service.dart';
 import 'whisper_model_loader.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   unawaited(WhisperModelLoader.warmUp());
-  runApp(const PrescriptionNormalizerApp());
+  await AuthService.instance.initialize();
+  runApp(const TranscareApp());
 }

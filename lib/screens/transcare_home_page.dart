@@ -8,18 +8,18 @@ import 'package:record/record.dart';
 
 import '../speech_to_text_pipeline.dart';
 import '../whisper_model_loader.dart';
-import 'prescription_form_page.dart';
+import 'transcription_result_page.dart';
 
-class PrescriptionHomePage extends StatefulWidget {
-  const PrescriptionHomePage({super.key});
+class TranscareHomePage extends StatefulWidget {
+  const TranscareHomePage({super.key});
 
   @override
-  State<PrescriptionHomePage> createState() => _PrescriptionHomePageState();
+  State<TranscareHomePage> createState() => _TranscareHomePageState();
 }
 
-class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
+class _TranscareHomePageState extends State<TranscareHomePage> {
   final _recorder = AudioRecorder();
-  SpeechToPrescriptionPipeline? _speechPipeline;
+  SpeechToTextPipeline? _speechPipeline;
   Future<void> _pipelineReady = Future.value();
   bool _isPipelineReady = false;
   bool _isInitializing = false;
@@ -179,11 +179,11 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
       return;
     }
 
-    final resultFuture = pipeline.transcribeAndExtract(wavFile.path);
+    final resultFuture = pipeline.transcribe(wavFile.path);
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => PrescriptionFormPage(resultFuture: resultFuture),
+        builder: (_) => TranscriptionResultPage(resultFuture: resultFuture),
       ),
     );
     if (!mounted) return;
@@ -195,49 +195,65 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     if (!_isPipelineReady) {
       return Scaffold(
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'TransCare',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 24),
-                if (_isInitializing) ...[
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                ],
-                Text(
-                  _status.isNotEmpty
-                      ? _status
-                      : 'Téléchargement du modèle Whisper...',
-                  textAlign: TextAlign.center,
-                ),
-                if (_initError != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Initialisation échouée.\n'
-                    'Assure-toi d’être en ligne puis réessaie.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _pipelineReady = _initializePipeline();
-                      });
-                    },
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Réessayer'),
-                  ),
-                ],
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                colorScheme.surface,
+                colorScheme.surface.withOpacity(0.6),
               ],
+            ),
+          ),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'TransCare',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 24),
+                  if (_isInitializing) ...[
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                  ],
+                  Text(
+                    _status.isNotEmpty
+                        ? _status
+                        : 'Telechargement du modele Whisper...',
+                    textAlign: TextAlign.center,
+                  ),
+                  if (_initError != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Initialisation echouee.\n'
+                      'Assure-toi d\'etre en ligne puis reessaie.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      onPressed: () {
+                        setState(() {
+                          _pipelineReady = _initializePipeline();
+                        });
+                      },
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Reessayer'),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -245,6 +261,7 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
     }
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('TransCare'),
         actions: [
@@ -268,18 +285,18 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
       _initError = null;
       setState(() {
         _status = WhisperModelLoader.status.value.isEmpty
-            ? 'Préparation du modèle Whisper...'
+            ? 'Préparation du Whisper...'
             : WhisperModelLoader.status.value;
       });
 
       final transcriber = await WhisperModelLoader.ensureInitialized();
 
-      _speechPipeline = SpeechToPrescriptionPipeline(transcriber: transcriber);
+      _speechPipeline = SpeechToTextPipeline(transcriber: transcriber);
 
       setState(() {
         _isPipelineReady = true;
         _isInitializing = false;
-        _status = 'Modèle Whisper prêt';
+        _status = 'Whisper prêt';
       });
     } catch (e) {
       setState(() {
@@ -295,6 +312,18 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
 
     return Stack(
       children: [
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                colorScheme.surface,
+                colorScheme.surface.withOpacity(0.6),
+              ],
+            ),
+          ),
+        ),
         SafeArea(
           child: Column(
             children: [
@@ -304,9 +333,9 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                     onLongPressStart: (_) => _startRecording(),
                     onLongPressEnd: (_) => _stopAndTranscribe(),
                     child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 120),
-                      width: 140,
-                      height: 140,
+                      duration: const Duration(milliseconds: 140),
+                      width: 170,
+                      height: 170,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: _isRecording
@@ -314,17 +343,17 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
                             : colorScheme.primary,
                         boxShadow: [
                           BoxShadow(
-                            blurRadius: 22,
+                            blurRadius: 28,
                             spreadRadius: 2,
-                            offset: const Offset(0, 6),
-                            color: Colors.black.withOpacity(0.2),
+                            offset: const Offset(0, 14),
+                            color: colorScheme.primary.withOpacity(0.28),
                           ),
                         ],
                       ),
                       child: Icon(
                         _isRecording ? Icons.mic : Icons.mic_none,
                         color: Colors.white,
-                        size: 56,
+                        size: 64,
                       ),
                     ),
                   ),
@@ -333,14 +362,14 @@ class _PrescriptionHomePageState extends State<PrescriptionHomePage> {
               SafeArea(
                 top: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
                         _isRecording
-                            ? 'Relâche pour arrêter et transcrire'
-                            : 'Appuie et maintiens pour dicter',
+                            ? 'Relache pour arreter et transcrire'
+                            : 'Appuyez et maintenez pour dicter',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: colorScheme.onSurfaceVariant,
                             ),

@@ -1,7 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import 'prescription_engine.dart';
-
 /// A simple contract for turning an audio file into raw text.
 abstract class SpeechTranscriber {
   Future<String> transcribeFile(String audioFilePath);
@@ -42,55 +40,22 @@ class NoOpSpeechTranscriber implements SpeechTranscriber {
   }
 }
 
-/// Result container for the full pipeline.
-class SpeechPipelineResult {
+/// Result container for speech-to-text only.
+class SpeechToTextResult {
   final String transcript;
-  final String cleanedTranscript;
-  final String normalizedTranscript;
-  final List<Prescription> prescriptions;
-  final PatientProfile? patient;
 
-  SpeechPipelineResult({
-    required this.transcript,
-    required this.cleanedTranscript,
-    required this.normalizedTranscript,
-    required this.prescriptions,
-    required this.patient,
-  });
+  const SpeechToTextResult({required this.transcript});
 }
 
-/// Connects speech-to-text, normalization, and extraction.
-class SpeechToPrescriptionPipeline {
-  SpeechToPrescriptionPipeline({
-    required this.transcriber,
-    TextNormalizer? normalizer,
-    RuleBasedExtractor? extractor,
-    PatientProfileExtractor? patientExtractor,
-  })  : normalizer = normalizer ?? const TextNormalizer(),
-        extractor = extractor ?? RuleBasedExtractor(),
-        patientExtractor = patientExtractor ?? const PatientProfileExtractor();
+/// Connects speech-to-text to the UI.
+class SpeechToTextPipeline {
+  SpeechToTextPipeline({required this.transcriber});
 
   final SpeechTranscriber transcriber;
-  final TextNormalizer normalizer;
-  final RuleBasedExtractor extractor;
-  final PatientProfileExtractor patientExtractor;
 
-  /// Convenience helper to go from audio file -> transcript -> normalized
-  /// string -> list of [Prescription].
-  Future<SpeechPipelineResult> transcribeAndExtract(String audioFilePath) async {
+  /// Convenience helper to go from audio file -> transcript.
+  Future<SpeechToTextResult> transcribe(String audioFilePath) async {
     final transcript = await transcriber.transcribeFile(audioFilePath);
-    final cleaned = normalizer.cleanTranscript(transcript);
-    final normalized = normalizer.normalizeForMatching(cleaned);
-    final patient =
-        patientExtractor.extract(cleaned, normalizedText: normalized);
-    final prescriptions = extractor.extract(normalized);
-
-    return SpeechPipelineResult(
-      transcript: transcript,
-      cleanedTranscript: cleaned,
-      normalizedTranscript: normalized,
-      prescriptions: prescriptions,
-      patient: patient,
-    );
+    return SpeechToTextResult(transcript: transcript);
   }
 }
