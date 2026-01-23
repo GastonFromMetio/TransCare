@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../route_observer.dart';
@@ -313,7 +314,8 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
     _prescription = prescription;
     _patientNameController.text =
         '${prescription['patient_name'] ?? ''}'.trim();
-    _dobController.text = '${prescription['date_of_birth'] ?? ''}'.trim();
+    _dobController.text =
+        _formatDateOfBirthForDisplay('${prescription['date_of_birth'] ?? ''}');
     for (final medication in _medications) {
       medication.dispose();
     }
@@ -469,9 +471,45 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
     return <String, dynamic>{
       'transcribed_text': _transcriptionController.text.trim(),
       'patient_name': _patientNameController.text.trim(),
-      'date_of_birth': _emptyToNull(_dobController.text.trim()),
+      'date_of_birth': _normalizeDateOfBirthForApi(_dobController.text),
       'medications': medications,
     };
+  }
+
+  String? _normalizeDateOfBirthForApi(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return null;
+    if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(raw)) {
+      return raw;
+    }
+    final match = RegExp(r'^(\d{2})/(\d{2})/(\d{4})$').firstMatch(raw);
+    if (match == null) {
+      return raw;
+    }
+    final day = match.group(1)!;
+    final month = match.group(2)!;
+    final year = match.group(3)!;
+    return '$year-$month-$day';
+  }
+
+  String _formatDateOfBirthForDisplay(String value) {
+    final raw = value.trim();
+    if (raw.isEmpty) return '';
+    final slashMatch = RegExp(r'^(\d{4})/(\d{2})/(\d{2})$').firstMatch(raw);
+    if (slashMatch != null) {
+      final year = slashMatch.group(1)!;
+      final month = slashMatch.group(2)!;
+      final day = slashMatch.group(3)!;
+      return '$day/$month/$year';
+    }
+    final dashMatch = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(raw);
+    if (dashMatch != null) {
+      final year = dashMatch.group(1)!;
+      final month = dashMatch.group(2)!;
+      final day = dashMatch.group(3)!;
+      return '$day/$month/$year';
+    }
+    return raw;
   }
 
   String? _emptyToNull(String value) {
@@ -931,6 +969,10 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
             TextFormField(
               controller: _dobController,
               onChanged: _markUserEdited,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                _DateSlashInputFormatter(),
+              ],
               decoration: const InputDecoration(
                 labelText: 'Date de naissance',
                 hintText: 'JJ/MM/AAAA',
@@ -1082,6 +1124,51 @@ class _TranscriptionResultPageState extends State<TranscriptionResultPage>
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DateSlashInputFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\\D'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue(text: '');
+    }
+    final trimmed = digits.length > 8 ? digits.substring(0, 8) : digits;
+    final buffer = StringBuffer();
+    for (var i = 0; i < trimmed.length; i += 1) {
+      buffer.write(trimmed[i]);
+      if (i == 1 || i == 3) {
+        if (i != trimmed.length - 1) {
+          buffer.write('/');
+        }
+      }
+    }
+    var selectionIndex = newValue.selection.baseOffset;
+    if (selectionIndex < 0) {
+      selectionIndex = newValue.text.length;
+    } else if (selectionIndex == 0 &&
+        oldValue.selection.baseOffset > 0 &&
+        newValue.text.isNotEmpty) {
+      final delta = newValue.text.length - oldValue.text.length;
+      selectionIndex = (oldValue.selection.baseOffset + delta)
+          .clamp(0, newValue.text.length);
+    }
+    final leading = selectionIndex <= 0
+        ? ''
+        : newValue.text.substring(0, selectionIndex);
+    final digitsBeforeCursor = RegExp(r'\\d').allMatches(leading).length;
+    var newOffset = digitsBeforeCursor;
+    if (digitsBeforeCursor > 2) newOffset += 1;
+    if (digitsBeforeCursor > 4) newOffset += 1;
+    newOffset = math.min(newOffset, buffer.length);
+    return TextEditingValue(
+      text: buffer.toString(),
+      selection: TextSelection.collapsed(offset: newOffset),
     );
   }
 }

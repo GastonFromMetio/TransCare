@@ -20,7 +20,7 @@ class WhisperModelLoader {
       temperature: 0.1,
       beamSize: 5,
       bestOf: 5,
-      assetModelPath: 'assets/models/ggml-tiny.bin',
+      assetModelPath: 'assets/models/ggml-base-q5_1.bin',
       forceBundledAsset: true,
       onStatus: (value) {
         status.value = value;
